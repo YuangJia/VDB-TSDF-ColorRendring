@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-# @file      nuscenes_pipeline.py
-# @author    Ignacio Vizzo     [ivizzo@uni-bonn.de]
-#
-# Copyright (c) 2021 Ignacio Vizzo, all rights reserved
 import argh
 
 from datasets import NuScenesDataset as Dataset
@@ -19,6 +14,7 @@ def main(
 ):
     """Help here!"""
     dataset = Dataset(root_dir, sequence, config)
+    print("Length of lidar_tokens:", len(dataset))
     pipeline = Pipeline(
         dataset, config, jump=jump, n_scans=n_scans, map_name=f"nuscenes_{sequence}"
     )

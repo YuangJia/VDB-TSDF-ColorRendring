@@ -1,25 +1,3 @@
-# MIT License
-#
-# # Copyright (c) 2022 Ignacio Vizzo, Cyrill Stachniss, University of Bonn
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
 from functools import reduce
 import os
 import sys
@@ -31,6 +9,7 @@ from tqdm import trange
 
 from utils import load_config, write_config
 from vdbfusion import VDBVolume
+from nuscene_utils import preprocess_mesh,mesh_to_level_set,level_set_to_numpy,extract_mesh,visualize_vdb_grid,extract_tsdf_values
 
 
 class VDBFusionPipeline:
@@ -50,16 +29,71 @@ class VDBFusionPipeline:
         )
         self._res = {}
 
+    @staticmethod
+    def save_tsdf_values_to_txt(active_voxels, active_tiles):
+        filename = '/root/autodl-tmp/vdbfusion/examples/python/results/voxel_tile.txt'
+        """
+        将活跃体素和瓦片的坐标及 TSDF 值保存到文本文件。
+
+        参数：
+        - filename: str，输出的文本文件路径
+        - active_voxels: List[Tuple[Tuple[int, int, int], float]]，活跃体素列表
+        - active_tiles: List[Tuple[Tuple[int, int, int], Tuple[int, int, int], float]]，活跃瓦片列表
+        """
+
+        with open(filename, "w") as file:
+            # 写入活跃体素
+            file.write("Active Voxels:\n")
+            for voxel in active_voxels:
+                coord, value = voxel
+                file.write(f"voxel: {coord}, TSDF Value: {value}\n")
+
+            # 写入活跃瓦片
+            file.write("\nActive Tiles:\n")
+            for tile in active_tiles:
+                coord_min, coord_max, value = tile
+                file.write(
+                    f"tile: Min: {coord_min}, Max: {coord_max}, TSDF Value: {value}\n"
+                )
+
+        print(f"Data successfully saved to {filename}")
+
     def run(self):
         self._run_tsdf_pipeline()
-        self._write_ply()
-        self._write_cfg()
-        self._write_vdb()
-        self._print_tim()
-        self._print_metrics()
+        print(dir(self._tsdf_volume.colors))
+        # active_voxels, active_tiles = extract_tsdf_values(self._tsdf_volume.tsdf)
+        # self.save_tsdf_values_to_txt(active_voxels, active_tiles)
+        # self._write_ply()
+        # self._write_cfg()
+        # self._write_vdb()
+        # self._print_tim()
+        # self._print_metrics()
+
+    def visualize_and_save(self, output_path="output_image.png"):
+        """
+        将 3D 网格可视化并保存为图片（使用离线渲染器，无需显示窗口）。
+
+        Parameters:
+        - output_path (str): 保存图片的路径。
+        """
+        # 准备几何数据
+        mesh = self._res["mesh"]
+        if not isinstance(mesh, o3d.geometry.TriangleMesh):
+            raise ValueError("The input object is not a valid TriangleMesh")
+
+        # 设置渲染场景
+        scene = o3d.visualization.rendering.OffscreenRenderer(1024, 768)  # 图像分辨率
+        scene.scene.set_background([1, 1, 1, 1])  # 白色背景
+        scene.scene.add_geometry("mesh", mesh, o3d.visualization.rendering.MaterialRecord())
+
+        # 渲染并保存
+        image = scene.render_to_image()
+        o3d.io.write_image(output_path, image)
+        print(f"可视化结果已保存为 {output_path}")
 
     def visualize(self):
         o3d.visualization.draw_geometries([self._res["mesh"]])
+        # self.visualize_and_save(output_path="/root/autodl-tmp/vdbfusion/examples/python/results/scan103.png")
 
     def __len__(self):
         return len(self._dataset)
@@ -67,9 +101,9 @@ class VDBFusionPipeline:
     def _run_tsdf_pipeline(self):
         times = []
         for idx in trange(self._jump, self._jump + self._n_scans, unit=" frames"):
-            scan, pose = self._dataset[idx]
+            scan,color,pose = self._dataset[idx]
             tic = time.perf_counter_ns()
-            self._tsdf_volume.integrate(scan, pose)
+            self._tsdf_volume.integrate(scan, color,pose)
             toc = time.perf_counter_ns()
             times.append(toc - tic)
         self._res = {"mesh": self._get_o3d_mesh(self._tsdf_volume, self._config), "times": times}
@@ -97,12 +131,41 @@ class VDBFusionPipeline:
 
     @staticmethod
     def _get_o3d_mesh(tsdf_volume, cfg):
-        vertices, triangles = tsdf_volume.extract_triangle_mesh(cfg.fill_holes, cfg.min_weight)
+        vertices, triangles, colors = tsdf_volume.extract_triangle_mesh(cfg.fill_holes, cfg.min_weight)
         mesh = o3d.geometry.TriangleMesh(
             o3d.utility.Vector3dVector(vertices),
             o3d.utility.Vector3iVector(triangles),
         )
+
+        mesh.vertex_colors = o3d.utility.Vector3dVector(colors/255.0)  # 添加颜色
         mesh.compute_vertex_normals()
+        # print("Preprocessing input mesh...")
+        # mesh = preprocess_mesh(mesh)
+        #
+        # # Convert it to a level set using OpenVDB tools
+        # print("Converting Triangle Mesh to a level set volume...")
+        # vdb_grid = mesh_to_level_set(mesh, 0.01)
+        #
+        # # Convert the VDB grid to a dense numpy array
+        # print("Converting to a dense SDF representation")
+        # sdf_volume, _ = level_set_to_numpy(vdb_grid)
+        # print("Volume output:")
+        # print("sdf_volume.shape = ", sdf_volume.shape)
+        # print("sdf_volume.min() = ", sdf_volume.min())
+        # print("sdf_volume.max() = ", sdf_volume.max())
+        #
+        # # You can now save the sdf_volume as a np array and read it later on
+        # numpy_filename = '/root/autodl-tmp/vdbfusion/examples/python/results' + self._map_name+"_sdf.npy"
+        # print("Saving sdf_volume to", numpy_filename)
+        # np.save(numpy_filename, sdf_volume)
+
+        # if mcubes:
+        #     print("Meshing dense volume by running marching cubes")
+        #     sdf_mesh = extract_mesh(sdf_volume)
+        #     # o3d.visualization.draw_geometries([sdf_mesh]) if visualize else None
+        #     mesh_filename = model_name + "_sdf_mesh" + file_extension
+        #     print("Saving sdf_volume mesh to", mesh_filename)
+        #     o3d.io.write_triangle_mesh(mesh_filename, sdf_mesh)
         return mesh
 
     def _print_metrics(self):

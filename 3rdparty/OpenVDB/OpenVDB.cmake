@@ -42,7 +42,7 @@ ExternalProject_Add(
              ${ExternalProject_CMAKE_CXX_FLAGS}
              # Custom OpenVDB build settings
              -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-             -DOPENVDB_BUILD_PYTHON_MODULE=OFF
+             -DOPENVDB_BUILD_PYTHON_MODULE=ON
              -DOPENVDB_BUILD_VDB_PRINT=OFF
              -DOPENVDB_CORE_SHARED=OFF
              -DOPENVDB_CORE_STATIC=ON
