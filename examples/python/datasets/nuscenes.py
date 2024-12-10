@@ -320,7 +320,7 @@ class NuScenesDataset:
 
             cam_intrinsic = np.array(cam_calib["camera_intrinsic"])
 
-            img = cv2.imread(os.path.join(self.nusc.dataroot, cam_data["filename"]))
+            img = cv2.cvtColor(cv2.imread(os.path.join(self.nusc.dataroot, cam_data["filename"])), cv2.COLOR_BGR2RGB) #需要从BGR转化到RGB
 
             # 点云转换到相机坐标系
             points_cam = transform_points(points_global, np.linalg.inv(cam_ego2global_matrix))  # 从全局坐标到相机坐标
